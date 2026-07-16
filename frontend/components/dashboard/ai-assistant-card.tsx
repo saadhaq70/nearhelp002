@@ -179,31 +179,35 @@ export default function AiAssistantCard({ guidance, activeSOS }: { guidance?: st
     setMessages(prev => [...prev, { role: "user", text }]);
 
     try {
-      // Call Gemini API
-      const response = await fetch('/api/gemini', {
+      // Call backend Mistral AI endpoint (public endpoint - no auth required for emergency use)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/sos/ai-chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          contents: [
-            {
-              parts: [{ 
-                text: `You are an emergency crisis assistant. The user is asking: "${text}". Provide clear, concise, actionable emergency guidance. If it's a medical emergency, give first aid steps. If it's a safety threat, give safety instructions. Include relevant emergency numbers for India (Police: 100, Fire: 101, Ambulance: 108, National Emergency: 112). CRITICAL: If the user's query is NOT related to an emergency, safety, first-aid, or crisis situation, you MUST refuse to answer it completely. Respond ONLY with "This is not an emergency or safety-related question. I am an AI Crisis Assistant and can only provide guidance for emergencies, first-aid, and safety threats." Do NOT provide any other information.`
-              }]
-            }
-          ],
-          generationConfig: {
-            maxOutputTokens: 250,
-            temperature: 0.3
-          }
+          system_instruction: {
+            parts: [{
+              text: `You are an emergency crisis assistant for India. For emergency questions, provide clear, actionable guidance with Indian emergency numbers (Police: 100, Fire: 101, Ambulance: 108, National Emergency: 112). For greetings or non-emergency questions, respond warmly and encourage them to ask emergency-related questions. Be helpful and supportive.`
+            }]
+          },
+          contents: [{
+            role: 'user',
+            parts: [{ text }]
+          }]
         })
       });
+
+      if (!response.ok) {
+        throw new Error(`Backend API error: ${response.status}`);
+      }
 
       const data = await response.json();
       const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || getReply(text);
       setMessages(prev => [...prev, { role: "assistant", text: reply }]);
     } catch (error) {
-      console.error('Gemini API error:', error);
-      // Fallback to local keyword engine if API fails
+      console.error('Backend Mistral AI error:', error);
+      // Fallback to local keyword engine if backend fails
       const reply = getReply(text);
       setMessages(prev => [...prev, { role: "assistant", text: reply }]);
     }

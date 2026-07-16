@@ -1,16 +1,22 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 const scheduleWelfareCheck = async (userId, sosId) => {
     try {
-        const { data: check } = await supabase.from('welfare_checks').insert({
-            user_id: userId,
-            sos_id: sosId,
-            scheduled_for: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        }).select().single();
+        const check = await prisma.welfareCheck.create({
+            data: {
+                user_id: userId,
+                sos_id: sosId,
+                scheduled_for: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                sent: false
+            }
+        });
 
         setTimeout(async () => {
             try {
-                await supabase.from('welfare_checks').update({ sent: true }).eq('id', check.id);
+                await prisma.welfareCheck.update({
+                    where: { id: check.id },
+                    data: { sent: true }
+                });
                 if (global.io) {
                     global.io.to(`user:${userId}`).emit('welfare:check', {
                         message: "Hi, we are checking in. Are you okay after yesterday's incident?",
@@ -29,12 +35,26 @@ const scheduleWelfareCheck = async (userId, sosId) => {
 
 const recordWelfareResponse = async (userId, sosId, response) => {
     try {
-        const { data: check } = await supabase.from('welfare_checks')
-            .update({ response })
-            .eq('user_id', userId).eq('sos_id', sosId)
-            .order('created_at', { ascending: false })
-            .limit(1).select().single();
-        return check;
+        const check = await prisma.welfareCheck.findFirst({
+            where: {
+                user_id: userId,
+                sos_id: sosId
+            },
+            orderBy: {
+                created_at: 'desc'
+            }
+        });
+
+        if (!check) {
+            throw new Error('Welfare check not found');
+        }
+
+        const updatedCheck = await prisma.welfareCheck.update({
+            where: { id: check.id },
+            data: { response }
+        });
+
+        return updatedCheck;
     } catch (err) {
         console.error('Error recording welfare response:', err);
         throw err;

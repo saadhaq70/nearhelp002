@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 const userEmitCounters = {};
 
@@ -16,15 +16,24 @@ module.exports = (io, socket) => {
 
             // Debounce DB writes — every 5 socket events
             if (userEmitCounters[userId] >= 5) {
-                await supabase.from('users').update({ lat, lng }).eq('id', userId);
+                await prisma.user.update({
+                    where: { id: userId },
+                    data: { lat, lng }
+                });
                 userEmitCounters[userId] = 0;
             }
 
             // Emit to all active SOS rooms this user participates in
-            const { data: activeSOS } = await supabase.from('sos')
-                .select('id')
-                .in('status', ['active', 'responding'])
-                .or(`seeker_id.eq.${userId},responders.cs.{${userId}}`);
+            const activeSOS = await prisma.sOS.findMany({
+                where: {
+                    status: { in: ['active', 'responding'] },
+                    OR: [
+                        { seeker_id: userId },
+                        { responders: { has: userId } }
+                    ]
+                },
+                select: { id: true }
+            });
 
             (activeSOS || []).forEach(sos => {
                 io.to(`sos:${sos.id}`).emit('location:responder_moved', { userId, lat, lng });

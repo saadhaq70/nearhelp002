@@ -1,9 +1,9 @@
 const jwt = require('jsonwebtoken');
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 /**
  * Middleware to protect routes using JWT authentication.
- * Verifies the token, fetches the user from Supabase, and attaches it to req.user.
+ * Verifies the token, fetches the user from PostgreSQL via Prisma, and attaches it to req.user.
  */
 const protect = async (req, res, next) => {
     let token;
@@ -17,14 +17,27 @@ const protect = async (req, res, next) => {
             // Verify token
             const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
 
-            // Get user from Supabase
-            const { data: user, error } = await supabase
-                .from('users')
-                .select('id, name, email, phone, age, blood_group, health_conditions, skills, lat, lng, guardians, is_suspended, trust_score')
-                .eq('id', decoded.id)
-                .single();
+            // Get user from PostgreSQL using Prisma
+            const user = await prisma.user.findUnique({
+                where: { id: decoded.id },
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    phone: true,
+                    age: true,
+                    blood_group: true,
+                    health_conditions: true,
+                    skills: true,
+                    lat: true,
+                    lng: true,
+                    guardians: true,
+                    is_suspended: true,
+                    trust_score: true
+                }
+            });
 
-            if (error || !user) {
+            if (!user) {
                 return res.status(401).json({ message: 'Not authorized, user not found' });
             }
 
@@ -33,10 +46,17 @@ const protect = async (req, res, next) => {
             }
 
             // Attach user to request object (normalized for both id and _id)
+            // Convert Decimal types to numbers
             req.user = {
                 ...user,
                 _id: user.id,
-                location: { lat: user.lat, lng: user.lng }
+                lat: user.lat ? parseFloat(user.lat.toString()) : null,
+                lng: user.lng ? parseFloat(user.lng.toString()) : null,
+                trust_score: user.trust_score ? parseFloat(user.trust_score.toString()) : 0,
+                location: { 
+                    lat: user.lat ? parseFloat(user.lat.toString()) : null, 
+                    lng: user.lng ? parseFloat(user.lng.toString()) : null 
+                }
             };
 
             next();

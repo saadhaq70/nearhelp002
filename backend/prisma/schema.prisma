@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                                               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                                             String         @db.VarChar(255)
+  email                                            String         @unique @db.VarChar(255)
+  password                                         String         @db.VarChar(255)
+  phone                                            String?        @db.VarChar(50)
+  age                                              Int?
+  blood_group                                      String?        @db.VarChar(10)
+  health_conditions                                String?
+  skills                                           String[]
+  is_physically_disabled                           Boolean        @default(false)
+  lat                                              Decimal?       @default(28.6139) @db.Decimal(10, 8)
+  lng                                              Decimal?       @default(77.2090) @db.Decimal(11, 8)
+  skill_verification                               Json?          @default("{\"Medical\": \"pending\"}")
+  skill_verification_status                        Json?          @default("{\"Medical\": \"pending\"}")
+  guardians                                        String[]       @default([]) @db.Uuid
+  is_active                                        Boolean        @default(true)
+  is_suspended                                     Boolean        @default(false)
+  is_admin                                         Boolean        @default(false)
+  false_alert_count                                Int            @default(0)
+  trust_score                                      Decimal        @default(0.0) @db.Decimal(3, 2)
+  total_ratings                                    Int            @default(0)
+  rating_sum                                       Int            @default(0)
+  is_online                                        Boolean        @default(false)
+  last_seen                                        DateTime?
+  created_at                                       DateTime       @default(now())
+  notifications_sent                               Notification[] @relation("NotificationSender")
+  notifications_received                           Notification[] @relation("NotificationUser")
+  ratings_as_ratee                                 Rating[]       @relation("RatingRatee")
+  ratings_as_rater                                 Rating[]       @relation("RatingRater")
+  sos_as_seeker                                    SOS[]          @relation("SOSSeeker")
+  welfare_checks_welfare_checks_guardian_idTousers WelfareCheck[] @relation("welfare_checks_guardian_idTousers")
+  welfare_checks                                   WelfareCheck[] @relation("WelfareCheckUser")
+
+  @@index([email])
+  @@index([is_online])
+  @@map("users")
+}
+
+model SOS {
+  id                      String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  seeker_id               String?        @db.Uuid
+  lat                     Decimal        @db.Decimal(10, 8)
+  lng                     Decimal        @db.Decimal(11, 8)
+  address                 String?
+  status                  String         @default("active") @db.VarChar(50)
+  type                    String?        @db.VarChar(100)
+  description             String?
+  modal_data              Json?
+  first_response_guidance String?
+  call_script             String?
+  responders              String[]       @db.Uuid
+  false_alarm             Boolean        @default(false)
+  is_anonymous            Boolean        @default(false)
+  anonymous_name          String?        @db.VarChar(255)
+  anonymous_blood_group   String?        @db.VarChar(10)
+  chat_log                Json?
+  resolution_summary      String?
+  debrief_prompt          String?
+  response_time_seconds   Int?
+  resolved_at             DateTime?
+  created_at              DateTime       @default(now())
+  is_flagged              Boolean        @default(false)
+  flagged_by              String[]       @default([]) @db.Uuid
+  ratings                 Rating[]
+  seeker                  User?          @relation("SOSSeeker", fields: [seeker_id], references: [id], onDelete: Cascade)
+  welfare_checks          WelfareCheck[]
+
+  @@index([seeker_id])
+  @@index([status])
+  @@map("sos")
+}
+
+model WelfareCheck {
+  id                                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id                                 String    @db.Uuid
+  guardian_id                             String?   @db.Uuid
+  sos_id                                  String?   @db.Uuid
+  status                                  String    @default("pending") @db.VarChar(50)
+  sent_at                                 DateTime  @default(now())
+  responded_at                            DateTime?
+  response                                String?
+  sent                                    Boolean   @default(false)
+  scheduled_for                           DateTime?
+  users_welfare_checks_guardian_idTousers User?     @relation("welfare_checks_guardian_idTousers", fields: [guardian_id], references: [id], onDelete: Cascade)
+  sos                                     SOS?      @relation(fields: [sos_id], references: [id], onDelete: Cascade)
+  user                                    User      @relation("WelfareCheckUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([guardian_id])
+  @@map("welfare_checks")
+}
+
+model Rating {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sos_id     String   @db.Uuid
+  rater_id   String   @db.Uuid
+  ratee_id   String   @db.Uuid
+  rating     Int
+  feedback   String?
+  created_at DateTime @default(now())
+  ratee      User     @relation("RatingRatee", fields: [ratee_id], references: [id], onDelete: Cascade)
+  rater      User     @relation("RatingRater", fields: [rater_id], references: [id], onDelete: Cascade)
+  sos        SOS      @relation(fields: [sos_id], references: [id], onDelete: Cascade)
+
+  @@index([sos_id])
+  @@map("ratings")
+}
+
+model Notification {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    String   @db.Uuid
+  sender_id  String?  @db.Uuid
+  type       String   @db.VarChar(50)
+  status     String   @default("unread") @db.VarChar(50)
+  data       Json?
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+  sender     User?    @relation("NotificationSender", fields: [sender_id], references: [id], onDelete: Cascade)
+  user       User     @relation("NotificationUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([sender_id])
+  @@index([user_id])
+  @@map("notifications")
+}

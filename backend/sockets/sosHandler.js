@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 module.exports = (io, socket) => {
     // When a seeker wants to join their own SOS room (for mutual updates)
@@ -19,11 +19,16 @@ module.exports = (io, socket) => {
             const { sosId } = data;
 
             // Get current SOS data
-            const { data: sos, error: fetchError } = await supabase.from('sos')
-                .select('*, users!seeker_id(name)')
-                .eq('id', sosId).single();
+            const sos = await prisma.sOS.findUnique({
+                where: { id: sosId },
+                include: {
+                    seeker: {
+                        select: { name: true }
+                    }
+                }
+            });
 
-            if (fetchError || !sos) {
+            if (!sos) {
                 return socket.emit('error', { message: 'SOS not found' });
             }
 
@@ -37,7 +42,10 @@ module.exports = (io, socket) => {
                 const updates = { responders };
                 if (sos.status === 'active') updates.status = 'responding';
 
-                await supabase.from('sos').update(updates).eq('id', sosId);
+                await prisma.sOS.update({
+                    where: { id: sosId },
+                    data: updates
+                });
             }
 
             // Broadcast to the room that a responder joined
@@ -64,7 +72,10 @@ module.exports = (io, socket) => {
     socket.on('sos:resolve', async (data) => {
         try {
             const { sosId } = data;
-            const { data: sos } = await supabase.from('sos').select('seeker_id, created_at').eq('id', sosId).single();
+            const sos = await prisma.sOS.findUnique({
+                where: { id: sosId },
+                select: { seeker_id: true, created_at: true }
+            });
 
             if (!sos) return socket.emit('error', { message: 'SOS not found' });
             if (sos.seeker_id !== socket.user.id) {
@@ -74,11 +85,14 @@ module.exports = (io, socket) => {
             const resolvedAt = new Date();
             const responseTimeSeconds = Math.round((resolvedAt.getTime() - new Date(sos.created_at).getTime()) / 1000);
 
-            await supabase.from('sos').update({
-                status: 'resolved',
-                resolved_at: resolvedAt.toISOString(),
-                response_time_seconds: responseTimeSeconds
-            }).eq('id', sosId);
+            await prisma.sOS.update({
+                where: { id: sosId },
+                data: {
+                    status: 'resolved',
+                    resolved_at: resolvedAt,
+                    response_time_seconds: responseTimeSeconds
+                }
+            });
 
             io.to(`sos:${sosId}`).emit('sos:resolved', { sosId, responseTimeSeconds });
             io.to(`chat:${sosId}`).emit('sos:resolved', { sosId, responseTimeSeconds });
@@ -92,12 +106,21 @@ module.exports = (io, socket) => {
     // When responder moves — relay to seeker
     socket.on('location:update', async ({ lat, lng }) => {
         try {
-            await supabase.from('users').update({ lat, lng }).eq('id', socket.user.id);
+            await prisma.user.update({
+                where: { id: socket.user.id },
+                data: { lat, lng }
+            });
 
-            const { data: activeSOS } = await supabase.from('sos')
-                .select('id, seeker_id')
-                .contains('responders', [socket.user.id])
-                .eq('status', 'responding');
+            const activeSOS = await prisma.sOS.findMany({
+                where: {
+                    responders: { has: socket.user.id },
+                    status: 'responding'
+                },
+                select: {
+                    id: true,
+                    seeker_id: true
+                }
+            });
 
             (activeSOS || []).forEach(sos => {
                 if (sos.seeker_id) {

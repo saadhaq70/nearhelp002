@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 const haversineDistance = (lat1, lng1, lat2, lng2) => {
     const R = 6371;
@@ -45,20 +45,38 @@ const getUsersInRadius = async (sosLocation, radiusKm, filters = {}) => {
     const { seekerId, type, isAnonymous } = filters;
 
     // Fetch targeted users: online OR seen in last 10 mins, non-suspended
-    const tenMinsAgo = new Date(Date.now() - 10 * 60000).toISOString();
+    const tenMinsAgo = new Date(Date.now() - 10 * 60000);
 
-    const { data: users } = await supabase
-        .from('users')
-        .select('id, lat, lng, skills, age, is_physically_disabled, guardians, last_seen, is_online')
-        .or(`is_online.eq.true,last_seen.gte.${tenMinsAgo}`)
-        .eq('is_suspended', false);
+    const users = await prisma.user.findMany({
+        where: {
+            OR: [
+                { is_online: true },
+                { last_seen: { gte: tenMinsAgo } }
+            ],
+            is_suspended: false
+        },
+        select: {
+            id: true,
+            lat: true,
+            lng: true,
+            skills: true,
+            age: true,
+            is_physically_disabled: true,
+            guardians: true,
+            last_seen: true,
+            is_online: true
+        }
+    });
 
     if (!users) return { priority: [], general: [], guardians: [] };
 
     // ... (rest of guardian logic) ...
     let guardianIds = [];
     if (seekerId && !isAnonymous) {
-        const { data: seeker } = await supabase.from('users').select('guardians').eq('id', seekerId).single();
+        const seeker = await prisma.user.findUnique({
+            where: { id: seekerId },
+            select: { guardians: true }
+        });
         if (seeker?.guardians?.length) {
             guardianIds = seeker.guardians;
         }

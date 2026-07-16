@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 const VALID_SKILLS = [
     'CPR Trained',
@@ -24,15 +24,39 @@ const VALID_SKILLS = [
 // @route GET /api/users/profile
 const getProfile = async (req, res) => {
     try {
-        const { data: user } = await supabase.from('users')
-            .select('id, name, email, phone, age, blood_group, health_conditions, skills, lat, lng, guardians, trust_score, total_ratings, is_physically_disabled, skill_verification, created_at, false_alert_count, is_suspended')
-            .eq('id', req.user.id).single();
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                age: true,
+                blood_group: true,
+                health_conditions: true,
+                skills: true,
+                lat: true,
+                lng: true,
+                guardians: true,
+                trust_score: true,
+                total_ratings: true,
+                is_physically_disabled: true,
+                skill_verification_status: true,
+                created_at: true,
+                false_alert_count: true,
+                is_suspended: true
+            }
+        });
+        
         if (!user) return res.status(404).json({ message: 'User not found' });
 
         // Hydrate guardians
         let guardiansData = [];
         if (user.guardians?.length) {
-            const { data: gs } = await supabase.from('users').select('id, name, email, phone').in('id', user.guardians);
+            const gs = await prisma.user.findMany({
+                where: { id: { in: user.guardians } },
+                select: { id: true, name: true, email: true, phone: true }
+            });
             guardiansData = gs || [];
         }
         res.json({ ...user, _id: user.id, location: { lat: user.lat, lng: user.lng }, guardiansData });
@@ -53,7 +77,11 @@ const updateProfile = async (req, res) => {
         if (bloodGroup !== undefined) updates.blood_group = bloodGroup;
         if (healthConditions !== undefined) updates.health_conditions = healthConditions;
 
-        const { data: user } = await supabase.from('users').update(updates).eq('id', req.user.id).select().single();
+        const user = await prisma.user.update({
+            where: { id: req.user.id },
+            data: updates
+        });
+        
         res.json({ ...user, _id: user.id });
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
@@ -68,7 +96,11 @@ const updateSkills = async (req, res) => {
         const isValid = skills.every(s => VALID_SKILLS.includes(s));
         if (!isValid) return res.status(400).json({ message: 'Invalid skills provided' });
 
-        const { data: user } = await supabase.from('users').update({ skills }).eq('id', req.user.id).select().single();
+        const user = await prisma.user.update({
+            where: { id: req.user.id },
+            data: { skills }
+        });
+        
         res.json({ ...user, _id: user.id });
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
@@ -80,16 +112,17 @@ const updateLocation = async (req, res) => {
     const { lat, lng } = req.body;
     try {
         if (lat === undefined || lng === undefined) return res.status(400).json({ message: 'lat and lng required' });
-        const { data: user } = await supabase.from('users')
-            .update({
+        
+        const user = await prisma.user.update({
+            where: { id: req.user.id },
+            data: {
                 lat: parseFloat(lat),
                 lng: parseFloat(lng),
                 is_online: true,
-                last_seen: new Date().toISOString()
-            })
-            .eq('id', req.user.id)
-            .select()
-            .single();
+                last_seen: new Date()
+            }
+        });
+        
         res.json({ ...user, _id: user.id, location: { lat: user.lat, lng: user.lng } });
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
@@ -99,29 +132,29 @@ const updateLocation = async (req, res) => {
 // @route GET /api/users/guardians
 const getGuardians = async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('guardians').eq('id', req.user.id).single();
-        if (userError && userError.code !== 'PGRST116') {
-            console.error("getGuardians user fetch error:", userError);
-            throw userError;
-        }
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { guardians: true }
+        });
         
         const guardianIds = user?.guardians || [];
         let accepted = [];
         if (guardianIds.length > 0) {
-            const { data: gs, error: gsError } = await supabase.from('users').select('id, name, email, phone').in('id', guardianIds);
-            if (gsError) console.error("getGuardians gs fetch error:", gsError);
+            const gs = await prisma.user.findMany({
+                where: { id: { in: guardianIds } },
+                select: { id: true, name: true, email: true, phone: true }
+            });
             accepted = gs || [];
         }
 
-        const { data: pendingNotifs, error: pendingError } = await supabase
-            .from('notifications')
-            .select('*')
-            .eq('sender_id', req.user.id)
-            .eq('type', 'guardian_request');
+        const pendingNotifs = await prisma.notification.findMany({
+            where: {
+                sender_id: req.user.id,
+                type: 'guardian_request'
+            }
+        });
 
-        if (pendingError) {
-            console.error("getGuardians pendingNotifs fetch error:", pendingError);
-        } else if (pendingNotifs && pendingNotifs.length > 0) {
+        if (pendingNotifs && pendingNotifs.length > 0) {
             console.log("SAMPLE NOTIFICATION:", pendingNotifs[0]);
         }
 
@@ -133,8 +166,10 @@ const getGuardians = async (req, res) => {
         let pending = [];
         if (pendingList.length > 0) {
             const pendingIds = pendingList.map(n => n.user_id);
-            const { data: ps, error: psError } = await supabase.from('users').select('id, name, email').in('id', pendingIds);
-            if (psError) console.error("getGuardians ps fetch error:", psError);
+            const ps = await prisma.user.findMany({
+                where: { id: { in: pendingIds } },
+                select: { id: true, name: true, email: true }
+            });
             pending = ps || [];
         }
 
@@ -149,35 +184,49 @@ const getGuardians = async (req, res) => {
 const addGuardian = async (req, res) => {
     const { email } = req.body;
     try {
-        const { data: guardian } = await supabase.from('users').select('id, name, email, phone').ilike('email', (email || '').trim()).single();
+        const guardian = await prisma.user.findFirst({
+            where: { 
+                email: { 
+                    equals: (email || '').trim(), 
+                    mode: 'insensitive' 
+                } 
+            },
+            select: { id: true, name: true, email: true, phone: true }
+        });
+        
         if (!guardian) return res.status(404).json({ message: 'User with that email not found' });
         if (guardian.id === req.user.id) return res.status(400).json({ message: 'Cannot add yourself as a guardian' });
 
-        const { data: self } = await supabase.from('users').select('name, guardians').eq('id', req.user.id).single();
+        const self = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { name: true, guardians: true }
+        });
+        
         const guardians = self?.guardians || [];
         if (guardians.includes(guardian.id)) return res.status(400).json({ message: 'Already a guardian' });
 
         // Check if a pending request already exists
-        const { data: existing } = await supabase.from('notifications')
-            .select('id')
-            .eq('user_id', guardian.id)
-            .eq('sender_id', req.user.id)
-            .eq('type', 'guardian_request')
-            .eq('status', 'pending')
-            .single();
+        const existing = await prisma.notification.findFirst({
+            where: {
+                user_id: guardian.id,
+                sender_id: req.user.id,
+                type: 'guardian_request',
+                status: 'pending'
+            }
+        });
 
         if (existing) return res.status(400).json({ message: 'Guardian request already pending' });
 
         // Create notification
-        const { data: notification, error: notifError } = await supabase.from('notifications').insert({
-            user_id: guardian.id,
-            sender_id: req.user.id,
-            type: 'guardian_request',
-            status: 'pending',
-            data: { sender_name: self.name }
-        }).select().single();
-
-        if (notifError) throw notifError;
+        const notification = await prisma.notification.create({
+            data: {
+                user_id: guardian.id,
+                sender_id: req.user.id,
+                type: 'guardian_request',
+                status: 'pending',
+                data: { sender_name: self.name }
+            }
+        });
 
         // Emit socket event for real-time update
         if (global.io) {
@@ -197,9 +246,18 @@ const addGuardian = async (req, res) => {
 // @route DELETE /api/users/guardians/:id
 const removeGuardian = async (req, res) => {
     try {
-        const { data: self } = await supabase.from('users').select('guardians').eq('id', req.user.id).single();
+        const self = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { guardians: true }
+        });
+        
         const guardians = (self?.guardians || []).filter(g => g !== req.params.id);
-        await supabase.from('users').update({ guardians }).eq('id', req.user.id);
+        
+        await prisma.user.update({
+            where: { id: req.user.id },
+            data: { guardians }
+        });
+        
         res.json({ message: 'Guardian removed' });
     } catch (error) {
         res.status(500).json({ message: 'Server error' });
@@ -216,10 +274,21 @@ const getNearbyUsers = async (req, res) => {
 
         if (!lat || !lng) return res.status(400).json({ message: 'Location not set. Share your location first.' });
 
-        const { data: users } = await supabase.from('users')
-            .select('id, name, skills, trust_score, lat, lng, is_online')
-            .eq('is_suspended', false)
-            .neq('id', req.user.id);
+        const users = await prisma.user.findMany({
+            where: {
+                is_suspended: false,
+                id: { not: req.user.id }
+            },
+            select: {
+                id: true,
+                name: true,
+                skills: true,
+                trust_score: true,
+                lat: true,
+                lng: true,
+                is_online: true
+            }
+        });
 
         const { haversineDistance } = require('../utils/routingEngine');
         const nearby = (users || [])

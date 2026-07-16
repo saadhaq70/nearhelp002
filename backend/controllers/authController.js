@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -11,24 +11,28 @@ const register = async (req, res) => {
         const { name, email, password, phone, age, bloodGroup, healthConditions, skills, isPhysicallyDisabled } = req.body;
         if (!name || !email || !password) return res.status(400).json({ message: 'Please add all required fields' });
 
-        const { data: existing } = await supabase.from('users').select('id').eq('email', email).single();
+        const existing = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true }
+        });
         if (existing) return res.status(400).json({ message: 'User already exists' });
 
         const salt = await bcrypt.genSalt(12);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        const { data: user, error } = await supabase.from('users').insert({
-            name, email,
-            password: hashedPassword,
-            phone: phone || null,
-            age: age ? parseInt(age) : null,
-            blood_group: bloodGroup || '',
-            health_conditions: healthConditions || '',
-            skills: Array.isArray(skills) ? skills : [],
-            is_physically_disabled: isPhysicallyDisabled || false,
-        }).select().single();
-
-        if (error) throw error;
+        const user = await prisma.user.create({
+            data: {
+                name,
+                email,
+                password: hashedPassword,
+                phone: phone || null,
+                age: age ? parseInt(age) : null,
+                blood_group: bloodGroup || '',
+                health_conditions: healthConditions || '',
+                skills: Array.isArray(skills) ? skills : [],
+                is_physically_disabled: isPhysicallyDisabled || false,
+            }
+        });
 
         const accessToken = generateAccessToken(user.id);
         const refreshToken = generateRefreshToken(user.id);
@@ -64,14 +68,23 @@ const login = async (req, res) => {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ message: 'Please add all required fields' });
 
-        const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
+        const user = await prisma.user.findUnique({
+            where: { email }
+        });
+        
         if (!user) return res.status(401).json({ message: 'Invalid credentials' });
         if (user.is_suspended) return res.status(403).json({ message: 'Account suspended due to repeated false alerts' });
 
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ message: 'Invalid credentials' });
 
-        await supabase.from('users').update({ is_online: true, last_seen: new Date().toISOString() }).eq('id', user.id);
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { 
+                is_online: true, 
+                last_seen: new Date()
+            }
+        });
 
         const accessToken = generateAccessToken(user.id);
         const refreshToken = generateRefreshToken(user.id);
@@ -106,7 +119,10 @@ const login = async (req, res) => {
 const logout = async (req, res) => {
     try {
         if (req.user) {
-            await supabase.from('users').update({ is_online: false }).eq('id', req.user.id);
+            await prisma.user.update({
+                where: { id: req.user.id },
+                data: { is_online: false }
+            });
         }
         res.cookie('jwt', '', { httpOnly: true, expires: new Date(0) });
         res.status(200).json({ message: 'Logged out successfully' });
@@ -145,7 +161,10 @@ const changePassword = async (req, res) => {
         if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Please provide current and new passwords' });
         if (newPassword.length < 6) return res.status(400).json({ message: 'New password must be at least 6 characters' });
 
-        const { data: user } = await supabase.from('users').select('*').eq('id', req.user.id).single();
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id }
+        });
+        
         if (!user) return res.status(404).json({ message: 'User not found' });
 
         const isMatch = await bcrypt.compare(currentPassword, user.password);
@@ -153,7 +172,11 @@ const changePassword = async (req, res) => {
 
         const salt = await bcrypt.genSalt(12);
         const hashed = await bcrypt.hash(newPassword, salt);
-        await supabase.from('users').update({ password: hashed }).eq('id', user.id);
+        
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { password: hashed }
+        });
 
         res.json({ message: 'Password changed successfully' });
     } catch (error) {

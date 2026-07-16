@@ -1,13 +1,11 @@
 // ============================================================
-// AetherNet AI Service — Gemini AI Powered
-// Fixed: removed non-existent gemini-3.5-flash model,
-//        429 (quota) is per-model — falls through to next model,
-//        only 401/403 (bad API key) short-circuit globally,
-//        improved logging and fallback chain.
+// NearHelp AI Service — Mistral AI Powered
+// Using Mistral Small (latest) for emergency response generation
+// Features: First-response guidance, call scripts, debrief, summaries
 // ============================================================
 
-// Initialize using process.env.GEMINI_API_KEY
-const apiKey = process.env.GEMINI_API_KEY;
+// Initialize using process.env.MISTRAL_API_KEY
+const apiKey = process.env.MISTRAL_API_KEY;
 const { getEmergencyLocation } = require('../utils/geocoding');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -40,75 +38,86 @@ function stripMarkdown(text) {
         .trim();
 }
 
-// ─── GEMINI API CORE HELPER ──────────────────────────────────
-async function callGemini(prompt, maxRetries = 2) {
-    if (!apiKey) throw new Error('GEMINI_API_KEY is not configured.');
+// ─── MISTRAL API CORE HELPER ──────────────────────────────────
+async function callMistral(prompt, maxRetries = 2) {
+    if (!apiKey) throw new Error('MISTRAL_API_KEY is not configured.');
 
-    const models = [
-        'gemini-2.5-flash',   // Primary — fastest, most capable
-        'gemini-2.0-flash',   // Fallback — stable
-        'gemini-2.5-pro',     // Last resort — always available
-    ];
+    // Use Mistral Small (latest) - fast, cost-effective, and capable
+    const model = 'mistral-small-latest';
+    const url = 'https://api.mistral.ai/v1/chat/completions';
 
-    for (const modelName of models) {
-        let attempts = 0;
-        while (attempts <= maxRetries) {
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                        generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
-                    }),
-                });
+    let attempts = 0;
+    while (attempts <= maxRetries) {
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: model,
+                    messages: [
+                        {
+                            role: 'user',
+                            content: prompt
+                        }
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 1024
+                }),
+            });
 
-                if (res.ok) {
-                    const data = await res.json();
-                    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (text && text.trim().length > 0) {
-                        const cleanText = stripMarkdown(text.trim());
-                        console.log(`[aiService] ✅ Gemini response generated using model: ${modelName}`);
-                        return cleanText;
-                    }
-                    console.warn(`[aiService] ⚠️ ${modelName} returned empty response.`);
-                    break; // Move to next model
+            if (res.ok) {
+                const data = await res.json();
+                const text = data?.choices?.[0]?.message?.content;
+                if (text && text.trim().length > 0) {
+                    const cleanText = stripMarkdown(text.trim());
+                    console.log(`[aiService] ✅ Mistral response generated using model: ${model}`);
+                    return cleanText;
                 }
-
-                if (res.status === 400) {
-                    throw new Error(`Gemini bad request: ${await res.text()}`);
-                }
-                if (res.status === 401 || res.status === 403) {
-                    throw new Error(`Gemini auth error ${res.status}: check API key`);
-                }
-
-                if (res.status === 429 || res.status === 503) {
-                    attempts++;
-                    if (attempts <= maxRetries) {
-                        const delayMs = 1500 * Math.pow(2, attempts); // 3s, 6s
-                        console.warn(`[aiService] ⚠️ ${modelName} hit ${res.status}. Retrying in ${delayMs}ms (Attempt ${attempts})...`);
-                        await delay(delayMs);
-                        continue;
-                    } else {
-                        console.warn(`[aiService] ⚠️ ${modelName} exhausted retries for ${res.status}. Trying next model...`);
-                        break; // Exhausted retries, move to next model
-                    }
-                }
-                
-                // Other errors
-                const errText = await res.text();
-                console.warn(`[aiService] ⚠️ ${modelName} failed (${res.status}): ${errText}`);
-                break; // Move to next model
-
-            } catch (err) {
-                console.warn(`[aiService] ⚠️ ${modelName} network/fetch error: ${err.message}`);
-                break; // Move to next model
+                console.warn(`[aiService] ⚠️ ${model} returned empty response.`);
+                throw new Error('Empty response from Mistral AI');
             }
+
+            if (res.status === 400) {
+                const errorData = await res.json();
+                throw new Error(`Mistral bad request: ${errorData.message || 'Invalid request'}`);
+            }
+            if (res.status === 401 || res.status === 403) {
+                throw new Error(`Mistral auth error ${res.status}: check API key`);
+            }
+
+            if (res.status === 429 || res.status === 503) {
+                attempts++;
+                if (attempts <= maxRetries) {
+                    const delayMs = 1500 * Math.pow(2, attempts); // 3s, 6s
+                    console.warn(`[aiService] ⚠️ ${model} hit ${res.status}. Retrying in ${delayMs}ms (Attempt ${attempts})...`);
+                    await delay(delayMs);
+                    continue;
+                } else {
+                    throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+                }
+            }
+            
+            // Other errors
+            const errText = await res.text();
+            console.warn(`[aiService] ⚠️ ${model} failed (${res.status}): ${errText}`);
+            throw new Error(`Mistral API error: ${res.status}`);
+
+        } catch (err) {
+            if (attempts < maxRetries && (err.message.includes('rate limit') || err.message.includes('503'))) {
+                attempts++;
+                const delayMs = 1500 * Math.pow(2, attempts);
+                console.warn(`[aiService] ⚠️ Network error, retrying in ${delayMs}ms...`);
+                await delay(delayMs);
+                continue;
+            }
+            throw err;
         }
     }
 
-    throw new Error('All Gemini models failed. Unable to generate AI response. Please contact emergency services immediately at 112.');
+    throw new Error('Mistral AI failed after retries. Unable to generate AI response. Please contact emergency services immediately at 112.');
 }
 
 // ─── 1. DYNAMIC FIRST-RESPONSE GUIDANCE ──────────────────────
@@ -131,7 +140,7 @@ Provide relevant emergency dispatch numbers (like 108 for medical or 112) depend
 CRITICAL: Format your response as a clear, readable numbered list with each step on a new line. Do not write a single block of text.`;
 
     try {
-        return await callGemini(prompt);
+        return await callMistral(prompt);
     } catch (err) {
         console.error('[aiService] ❌ CRITICAL: Unable to generate first-response guidance:', err.message);
         throw new Error(`AI service unavailable: ${err.message}. Please contact emergency services immediately at 112.`);
@@ -205,7 +214,7 @@ DO NOT include:
 Write a complete, professional emergency call script (4-6 sentences). Start now with "Hello, this is ${name}..."`;
 
     try {
-        return await callGemini(prompt);
+        return await callMistral(prompt);
     } catch (err) {
         console.error('[aiService] ❌ Unable to generate call script:', err.message);
         throw new Error(`AI service unavailable: ${err.message}`);
@@ -223,7 +232,7 @@ const generateDebriefPrompt = async (sos) => {
 Generate a short, thoughtful decompression message checking in on their well-being based on what they just went through.`;
 
     try {
-        return await callGemini(prompt);
+        return await callMistral(prompt);
     } catch (err) {
         console.error('[aiService] ❌ Unable to generate debrief:', err.message);
         throw new Error(`AI service unavailable: ${err.message}`);
@@ -243,7 +252,7 @@ const generateResolutionSummary = async (sos) => {
 - Log description: "${sos.modal_data?.description || 'No user input metadata available'}"`;
 
     try {
-        return await callGemini(prompt);
+        return await callMistral(prompt);
     } catch (err) {
         console.error('[aiService] ❌ Unable to generate resolution summary:', err.message);
         throw new Error(`AI service unavailable: ${err.message}`);

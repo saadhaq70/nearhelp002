@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 const sosHandler = require('./sosHandler');
 const chatHandler = require('./chatHandler');
 const locationHandler = require('./locationHandler');
@@ -16,14 +16,20 @@ module.exports = (io) => {
                 return next(new Error('Authentication error: Invalid token payload'));
             }
 
-            const { data: user, error } = await supabase.from('users')
-                .select('id, name, email, skills, is_suspended, lat, lng, guardians')
-                .eq('id', decoded.id).single();
+            const user = await prisma.user.findUnique({
+                where: { id: decoded.id },
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    skills: true,
+                    is_suspended: true,
+                    lat: true,
+                    lng: true,
+                    guardians: true
+                }
+            });
 
-            if (error) {
-                console.error('[Socket Auth] Supabase error fetching user:', error);
-                return next(new Error(`Authentication error: Database failure` || error.message));
-            }
             if (!user) {
                 console.error('[Socket Auth] User not found in DB for ID:', decoded.id);
                 return next(new Error('Authentication error: User not found'));
@@ -41,18 +47,42 @@ module.exports = (io) => {
     io.on('connection', async (socket) => {
         console.log(`User connected: ${socket.user.name} (${socket.id})`);
 
-        await supabase.from('users').update({ is_online: true }).eq('id', socket.user.id);
+        await prisma.user.update({
+            where: { id: socket.user.id },
+            data: { is_online: true }
+        });
         io.to('admin:room').emit('admin:user_online', { userId: socket.user.id });
 
         socket.join(`user:${socket.user.id}`);
 
         if (socket.user.email === 'municipal@community.gov.in') {
             socket.join('admin:room');
-            const { data: activeSOS } = await supabase.from('sos')
-                .select('id, type, status, lat, lng, seeker_id, responders, created_at')
-                .in('status', ['active', 'responding']);
-            const { data: onlineUsers } = await supabase.from('users')
-                .select('id, name, lat, lng, skills, is_online').eq('is_online', true);
+            const activeSOS = await prisma.sOS.findMany({
+                where: {
+                    status: { in: ['active', 'responding'] }
+                },
+                select: {
+                    id: true,
+                    type: true,
+                    status: true,
+                    lat: true,
+                    lng: true,
+                    seeker_id: true,
+                    responders: true,
+                    created_at: true
+                }
+            });
+            const onlineUsers = await prisma.user.findMany({
+                where: { is_online: true },
+                select: {
+                    id: true,
+                    name: true,
+                    lat: true,
+                    lng: true,
+                    skills: true,
+                    is_online: true
+                }
+            });
             socket.emit('admin:current_state', { activeSOS: activeSOS || [], onlineUsers: onlineUsers || [] });
         }
 
@@ -62,7 +92,13 @@ module.exports = (io) => {
 
         socket.on('disconnect', async () => {
             console.log(`User disconnected: ${socket.user.name}`);
-            await supabase.from('users').update({ is_online: false, last_seen: new Date().toISOString() }).eq('id', socket.user.id);
+            await prisma.user.update({
+                where: { id: socket.user.id },
+                data: {
+                    is_online: false,
+                    last_seen: new Date()
+                }
+            });
             io.to('admin:room').emit('admin:user_offline', { userId: socket.user.id });
         });
     });

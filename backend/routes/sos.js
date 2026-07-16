@@ -27,6 +27,9 @@ router.post('/chat-assist', (req, res) => {
     res.json({ reply });
 });
 
+// Mistral AI chat - public endpoint for emergency guidance (no auth required)
+router.post('/ai-chat', require('../controllers/sosController').handlePublicAIChat);
+
 // Protected routes
 router.post('/chat', protect, require('../controllers/sosController').handleAIChat);
 router.post('/create', protect, createSOS);

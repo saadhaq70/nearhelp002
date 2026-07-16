@@ -23,8 +23,25 @@ function BoundsUpdater({ seekerPos, responderPos }: { seekerPos: any; responderP
     const map = useMap();
     useEffect(() => {
         const points: [number, number][] = [];
-        if (seekerPos?.lat) points.push([seekerPos.lat, seekerPos.lng]);
-        if (responderPos?.lat) points.push([responderPos.lat, responderPos.lng]);
+        
+        // Validate seeker position
+        if (seekerPos?.lat && seekerPos?.lng) {
+            const lat = typeof seekerPos.lat === 'number' ? seekerPos.lat : parseFloat(String(seekerPos.lat));
+            const lng = typeof seekerPos.lng === 'number' ? seekerPos.lng : parseFloat(String(seekerPos.lng));
+            if (!isNaN(lat) && !isNaN(lng) && isFinite(lat) && isFinite(lng)) {
+                points.push([lat, lng]);
+            }
+        }
+        
+        // Validate responder position
+        if (responderPos?.lat && responderPos?.lng) {
+            const lat = typeof responderPos.lat === 'number' ? responderPos.lat : parseFloat(String(responderPos.lat));
+            const lng = typeof responderPos.lng === 'number' ? responderPos.lng : parseFloat(String(responderPos.lng));
+            if (!isNaN(lat) && !isNaN(lng) && isFinite(lat) && isFinite(lng)) {
+                points.push([lat, lng]);
+            }
+        }
+        
         if (points.length >= 2) {
             map.fitBounds(points, { padding: [60, 60] });
         } else if (points.length === 1) {
@@ -35,18 +52,42 @@ function BoundsUpdater({ seekerPos, responderPos }: { seekerPos: any; responderP
 }
 
 export default function MutualMap({ seekerPos, responderPos, sosType, responderName }: Props) {
-    const midLat = seekerPos && responderPos
-        ? (seekerPos.lat + responderPos.lat) / 2
-        : seekerPos?.lat || responderPos?.lat || 28.6139;
+    // Parse coordinates to ensure they are numbers
+    const parseSeekerPos = seekerPos ? {
+        lat: typeof seekerPos.lat === 'number' ? seekerPos.lat : parseFloat(String(seekerPos.lat)),
+        lng: typeof seekerPos.lng === 'number' ? seekerPos.lng : parseFloat(String(seekerPos.lng))
+    } : null;
+    
+    const parseResponderPos = responderPos ? {
+        lat: typeof responderPos.lat === 'number' ? responderPos.lat : parseFloat(String(responderPos.lat)),
+        lng: typeof responderPos.lng === 'number' ? responderPos.lng : parseFloat(String(responderPos.lng))
+    } : null;
+    
+    // Validate coordinates are valid numbers
+    const validSeekerPos = parseSeekerPos && 
+        !isNaN(parseSeekerPos.lat) && 
+        !isNaN(parseSeekerPos.lng) && 
+        isFinite(parseSeekerPos.lat) && 
+        isFinite(parseSeekerPos.lng) ? parseSeekerPos : null;
+        
+    const validResponderPos = parseResponderPos && 
+        !isNaN(parseResponderPos.lat) && 
+        !isNaN(parseResponderPos.lng) && 
+        isFinite(parseResponderPos.lat) && 
+        isFinite(parseResponderPos.lng) ? parseResponderPos : null;
 
-    const midLng = seekerPos && responderPos
-        ? (seekerPos.lng + responderPos.lng) / 2
-        : seekerPos?.lng || responderPos?.lng || 77.2090;
+    const midLat = validSeekerPos && validResponderPos
+        ? (validSeekerPos.lat + validResponderPos.lat) / 2
+        : validSeekerPos?.lat || validResponderPos?.lat || 28.6139;
+
+    const midLng = validSeekerPos && validResponderPos
+        ? (validSeekerPos.lng + validResponderPos.lng) / 2
+        : validSeekerPos?.lng || validResponderPos?.lng || 77.2090;
 
     const defaultCenter: [number, number] = [midLat, midLng];
 
-    const seekerPosArr: [number, number] | null = seekerPos?.lat ? [seekerPos.lat, seekerPos.lng] : null;
-    const responderPosArr: [number, number] | null = responderPos?.lat ? [responderPos.lat, responderPos.lng] : null;
+    const seekerPosArr: [number, number] | null = validSeekerPos ? [validSeekerPos.lat, validSeekerPos.lng] : null;
+    const responderPosArr: [number, number] | null = validResponderPos ? [validResponderPos.lat, validResponderPos.lng] : null;
 
     return (
         <MapContainer

@@ -1,41 +1,78 @@
-# Dependency directories
-node_modules/
+# Backend .gitignore
 
-# Environment variables
+# ============================================
+# CRITICAL: Environment & Secrets
+# ============================================
 .env
-.env.development
-.env.production
-.env.*.local
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+config/secrets/
 
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+.pnp
+.pnp.js
+
+# ============================================
 # Logs
-logs
+# ============================================
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# Optional npm cache directory
+# ============================================
+# Database
+# ============================================
+*.sqlite
+*.sqlite3
+*.db
+drop-and-recreate.sql
+*.dump
+*.backup
+
+# ============================================
+# Prisma
+# ============================================
+prisma/migrations/*.sql.backup
+
+# ============================================
+# Cache
+# ============================================
 .npm
-
-# Optional eslint cache
 .eslintcache
+.cache/
 
-# Mac/Windows system files
+# ============================================
+# OS Files
+# ============================================
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# ---------------------------------------------------
-# Custom additions based on your directory structure
-# ---------------------------------------------------
-
-# Local Scratch and Manual Test Files
-# (Remove these lines if you actually want to version control your test scripts)
-scratch_test_*.js
+# ============================================
+# Test & Debug Files
+# ============================================
 test-*.js
+!test-critical-flows.js
+scratch_*.js
+debug_*.js
+temp_*.js
 
-# Local Dev/Admin Scripts
-drop-and-recreate.sql
+# ============================================
+# Build
+# ============================================
+dist/
+build/
 
-# Local Data (Uncomment if the 'data' folder holds local DB dumps/temp files)
-# /data/*
-# !/data/seed.json # Example of keeping a specific file while ignoring the rest
+# ============================================
+# IMPORTANT: Keep these!
+# ============================================
+!.env.example

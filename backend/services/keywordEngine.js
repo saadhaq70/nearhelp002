@@ -1,6 +1,6 @@
 // ============================================================
 // NearHelp Keyword Response Engine
-// Replaces Gemini API — zero external calls, zero cost
+// Provides fallback responses when AI is unavailable
 // ============================================================
 
 const RESPONSES = {

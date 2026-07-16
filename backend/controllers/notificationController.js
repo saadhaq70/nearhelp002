@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const prisma = require('../config/prisma');
 
 const getNotifications = async (req, res) => {
     try {
@@ -11,32 +11,21 @@ const getNotifications = async (req, res) => {
             return res.status(400).json({ message: 'Invalid user ID format' });
         }
 
-        const { data: notifications, error } = await supabase
-            .from('notifications')
-            .select(`
-                *,
-                sender:sender_id (id, name, email)
-            `)
-            .eq('user_id', userId)
-            .order('created_at', { ascending: false })
-            .limit(20);
+        const notifications = await prisma.notification.findMany({
+            where: { user_id: userId },
+            include: {
+                sender: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true
+                    }
+                }
+            },
+            orderBy: { created_at: 'desc' },
+            take: 20
+        });
 
-        if (error) {
-            console.error("[getNotifications] Supabase query error:", error);
-            // Fallback if the join fails (sometimes relationships aren't detected)
-            if (error.message.includes('relationship') || ['PGRST200', 'PGRST201'].includes(error.code)) {
-                const { data: simpleNotifs, error: simpleError } = await supabase
-                    .from('notifications')
-                    .select('*')
-                    .eq('user_id', userId)
-                    .order('created_at', { ascending: false })
-                    .limit(20);
-
-                if (simpleError) throw simpleError;
-                return res.json(simpleNotifs);
-            }
-            return res.status(500).json({ message: 'Database error', error: error.message });
-        }
         res.json(notifications);
     } catch (error) {
         console.error("[getNotifications] Catch block error:", error);
@@ -51,26 +40,26 @@ const updateStatus = async (req, res) => {
 
     try {
         // Fetch notification first to verify ownership and type
-        const { data: notification } = await supabase
-            .from('notifications')
-            .select('*')
-            .eq('id', id)
-            .eq('user_id', req.user.id)
-            .single();
+        const notification = await prisma.notification.findFirst({
+            where: {
+                id: id,
+                user_id: req.user.id
+            }
+        });
 
         if (!notification) return res.status(404).json({ message: 'Notification not found' });
 
         // Update status in notifications table (stored in both column and data)
         const newData = { ...notification.data, status };
         
-        const { data: updated, error: updateError } = await supabase
-            .from('notifications')
-            .update({ status: status, data: newData, is_read: true })
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (updateError) throw updateError;
+        const updated = await prisma.notification.update({
+            where: { id: id },
+            data: {
+                status: status,
+                data: newData,
+                is_read: true
+            }
+        });
 
         // Handle logical side effects based on type
         if (status === 'accepted' && notification.type === 'guardian_request') {
@@ -78,30 +67,31 @@ const updateStatus = async (req, res) => {
             const guardianId = req.user.id;         // The person who accepted
 
             // Add recipient (guardian) to sender's (seeker) guardians list
-            const { data: seeker } = await supabase
-                .from('users')
-                .select('guardians')
-                .eq('id', seekerId)
-                .single();
+            const seeker = await prisma.user.findUnique({
+                where: { id: seekerId },
+                select: { guardians: true }
+            });
 
             const guardians = seeker.guardians || [];
             if (!guardians.includes(guardianId)) {
                 guardians.push(guardianId);
-                await supabase
-                    .from('users')
-                    .update({ guardians })
-                    .eq('id', seekerId);
+                await prisma.user.update({
+                    where: { id: seekerId },
+                    data: { guardians }
+                });
                     
                 if (global.io) {
                     global.io.to(`user:${seekerId}`).emit('guardian:updated');
                     
-                    const { data: acceptNotif } = await supabase.from('notifications').insert({
-                        user_id: seekerId,
-                        sender_id: guardianId,
-                        type: 'guardian_accepted',
-                        status: 'unread',
-                        data: { message: `${req.user.name} accepted your guardian request` }
-                    }).select().single();
+                    const acceptNotif = await prisma.notification.create({
+                        data: {
+                            user_id: seekerId,
+                            sender_id: guardianId,
+                            type: 'guardian_accepted',
+                            status: 'unread',
+                            data: { message: `${req.user.name} accepted your guardian request` }
+                        }
+                    });
                     
                     if (acceptNotif) {
                         global.io.to(`user:${seekerId}`).emit('notification:new', {
@@ -123,13 +113,13 @@ const updateStatus = async (req, res) => {
 // @route PUT /api/notifications/read-all
 const markAllRead = async (req, res) => {
     try {
-        const { error } = await supabase
-            .from('notifications')
-            .update({ status: 'read' })
-            .eq('user_id', req.user.id)
-            .in('status', ['unread', 'pending']);
-
-        if (error) throw error;
+        await prisma.notification.updateMany({
+            where: {
+                user_id: req.user.id,
+                status: { in: ['unread', 'pending'] }
+            },
+            data: { status: 'read' }
+        });
 
         res.json({ message: 'All notifications marked as read' });
     } catch (error) {
